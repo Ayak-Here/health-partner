@@ -8,10 +8,11 @@ if "user" not in st.session_state:
 
 import pandas as pd
 import joblib
+import shap
 import random
 import time
 from datetime import datetime
-
+import numpy as np
 import sys
 import os
 from pathlib import Path
@@ -232,6 +233,83 @@ def generate_diabetes_explanation(age, glucose, bp, bmi):
         return "This result is mainly due to " + ", ".join(reasons) + ". " + " ".join(notes)
     else:
         return "Your health parameters are within a healthy range, indicating lower diabetes risk."
+
+def explain_diabetes_shap(age, gender_str, bp, glucose, bmi_value, pred):
+    try:
+        gender_enc = encoder.transform([gender_str])[0]
+    except:
+        gender_enc = 0
+
+    X = pd.DataFrame([[age, gender_enc, bp, glucose, bmi_value]],
+                     columns=["Age","Gender","BloodPressure","Glucose","BMI"])
+
+    X_scaled = scaler.transform(X)
+
+    # SHAP explainer
+    explainer = shap.Explainer(model)
+    shap_values = explainer(X_scaled)
+
+    values = shap_values.values
+
+    # Flatten properly
+    values = np.array(values).flatten()
+
+    feature_names = ["Age", "Gender", "BloodPressure", "Glucose", "BMI"]
+
+    impact = dict(zip(feature_names, values))
+
+    sorted_impact = sorted(impact.items(), key=lambda x: abs(x[1]), reverse=True)
+
+    explanation = []
+
+
+
+    for feature, val in sorted_impact:
+
+        # 👉 For HIGH RISK → only positive contributors
+        if pred == "High Risk" and val <= 0:
+            continue
+
+        # 👉 For LOW RISK → only negative contributors
+        if pred != "High Risk" and val > 0:
+            continue
+
+        if feature == "BMI":
+            if pred == "High Risk":
+                explanation.append("Your BMI is contributing to increased diabetes risk.")
+            else:
+                explanation.append("Your BMI is in a healthy range, helping reduce diabetes risk.")
+
+        elif feature == "Glucose":
+            if pred == "High Risk":
+                explanation.append("Your glucose level is high and is a major risk factor.")
+            else:
+                explanation.append("Your glucose level is normal, which is a positive sign.")
+
+        elif feature == "Age":
+            if pred == "High Risk":
+                explanation.append("Your age increases your susceptibility to diabetes.")
+            else:
+                explanation.append("Your age is relatively low, reducing diabetes risk.")
+
+        elif feature == "BloodPressure":
+            if pred == "High Risk":
+                explanation.append("Your blood pressure is contributing to higher risk.")
+            else:
+                explanation.append("Your blood pressure is within a healthy range.")
+
+        elif feature == "Gender":
+            # 👇 ONLY show if relevant after filtering
+            if pred == "High Risk":
+                explanation.append("Your gender has a minor influence on increasing risk.")
+            else:
+                explanation.append("Your gender is not contributing to diabetes risk.")
+
+        # Stop after top 3 relevant reasons
+        if len(explanation) == 3:
+            break
+
+    return explanation
 
 def calculate_health_score(bp, glucose, bmi):
     score = 100
@@ -494,10 +572,15 @@ elif page == "Diabetes Prediction":
             st.write(f"### Confidence: **{conf:.2f}**")
         
             explanation = generate_diabetes_explanation(age, glucose, bp, bmi)
-
+            shap_explanation = explain_diabetes_shap(age, gender, bp, glucose, bmi, pred)
             st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
             st.subheader("🧠 Why this result?")
             st.info(explanation)
+
+            st.markdown("### 🔍 Detailed AI Explanation")
+
+            for line in shap_explanation:
+                st.write(f"• {line}")
 
             if pred == "High Risk":
                 st.error("⚠ HIGH RISK DETECTED")

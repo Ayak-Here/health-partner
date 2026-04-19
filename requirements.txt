@@ -9,3 +9,4 @@ tensorflow==2.12.0
 pillow
 opencv-python-headless
 kaggle
+shap
