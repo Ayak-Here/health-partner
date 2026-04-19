@@ -7,5 +7,5 @@ matplotlib
 seaborn
 tensorflow==2.12.0
 pillow
-opencv-python
+opencv-python-headless
 kaggle
