@@ -7,6 +7,7 @@ if "user" not in st.session_state:
 # ---------------------------------------------
 
 import pandas as pd
+from groq import Groq
 import joblib
 import shap
 import random
@@ -36,6 +37,13 @@ except Exception as e:
     load_error = str(e)
 
 st.set_page_config(page_title="Health Predictor", layout="wide")
+
+# ---------------------------
+# GROQ CLIENT
+# ---------------------------
+client = Groq(
+    api_key=st.secrets["GROQ_API_KEY"]
+)
 
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
@@ -245,7 +253,6 @@ def explain_diabetes_shap(age, gender_str, bp, glucose, bmi_value, pred):
 
     X_scaled = scaler.transform(X)
 
-    # SHAP explainer
     explainer = shap.Explainer(model)
     shap_values = explainer(X_scaled)
 
@@ -804,263 +811,305 @@ elif page == "Stress Level Checker":
 
 elif page == "Symptom Chat":
 
-    from datetime import datetime
     import time
-    import re
-    import html
 
-    st.markdown(
-        """
-        <style>
-        /* Chat bubbles */
-        .chat-row { display:flex; gap:10px; margin-bottom:10px; align-items:flex-end; }
-        .user-bubble { background:#DCF8C6; padding:12px; border-radius:14px; border-bottom-right-radius:2px; max-width:78%; animation: fadeIn 0.18s ease; }
-        .assistant-bubble { background: #FFFFFF; padding:12px; border-radius:14px; border:1px solid rgba(0,0,0,0.06); max-width:78%; animation: fadeIn 0.18s ease; }
-        .meta-time { font-size:11px; margin-top:6px; color:#6b7280; display:block; }
+    # ================= CUSTOM CSS =================
 
-        /* Avatar styles */
-        .avatar { width:44px; height:44px; border-radius:8px; display:flex; align-items:center; justify-content:center; }
-        .user-avatar { background: linear-gradient(135deg,#32CD32,#22a552); color:white; }
-        .doc-avatar { background: linear-gradient(135deg,#2b7edb,#1f6fb3); color:white; }
+    st.markdown("""
+    <style>
 
-        /* Animations */
-        @keyframes fadeIn { from { opacity:0; transform: translateY(6px);} to {opacity:1; transform: translateY(0);} }
-
-        /* Make chat input bigger + wider */
-        [data-testid="stChatInputArea"] textarea {
-            min-height: 52px !important;
-            font-size: 16px !important;
-            padding: 12px !important;
-        }
-        [data-testid="stChatInput"] {
-            width: 90% !important;
-            margin-left: auto !important;
-            margin-right: auto !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.header("💬 Symptom Chat — Talk to Your Virtual Clinician")
-    st.write("Describe what you're feeling. I'll ask a few friendly follow-up questions and guide you safely.")
-    st.markdown("<div class='form-card'>", unsafe_allow_html=True)
-
-    clear_col, _ = st.columns([0.18, 0.82])
-    if clear_col.button("🗑 Clear Chat"):
-        st.session_state.pop("chat_history", None)
-        st.session_state.pop("chat_state", None)
-        st.session_state.pop("last_user_msgs", None)
-        st.rerun()
-
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    if "chat_state" not in st.session_state:
-        st.session_state.chat_state = {
-            "domain": None,
-            "q_index": 0,
-            "answers": {},
-            "finished": False,
-            "emergency": False,
-            "user_topic": None,
-            "show_finders": False,
-            "severity_score": 0,
-        }
-
-    state = st.session_state.chat_state
-
-    def now_ts():
-        return datetime.now().strftime("%I:%M %p")
-
-    def push_user(text):
-        st.session_state.chat_history.append({"role": "user", "text": text, "time": now_ts()})
-
-    def push_assistant(text):
-        st.session_state.chat_history.append({"role": "assistant", "text": text, "time": now_ts()})
-
-    def classify_initial(text):
-        t = text.lower()
-        if any(k in t for k in ["chest pain", "can't breathe", "cannot breathe", "passing out", "faint"]):
-            return "emergency", "emergency"
-        if any(k in t for k in ["anxious", "panic", "overthinking", "depressed", "stress"]):
-            return "mental", "mental health"
-        if any(k in t for k in ["fever", "temperature", "shivering"]):
-            return "fever", "fever"
-        if any(k in t for k in ["vomit", "nausea", "diarrhea", "stomach"]):
-            return "stomach", "stomach"
-        if any(k in t for k in ["headache", "migraine", "dizzy"]):
-            return "head", "headache"
-        if any(k in t for k in ["rash", "itch", "skin", "spots"]):
-            return "skin", "skin"
-        if any(k in t for k in ["breath", "shortness", "wheeze", "cough"]):
-            return "breathing", "breathing"
-        return "general", "general wellness"
-
-    FOLLOWUPS = {
-        "fever": [("temp", "Do you have a measured temperature?"), ("cough", "Any cough or throat pain?"), ("aches", "Any muscle/body pain?")],
-        "stomach": [("vomit", "Are you vomiting?"), ("diarr", "Any loose motions?"), ("pain_loc", "Where exactly is the pain?")],
-        "head": [("light", "Does light or noise worsen your headache?"), ("neck", "Any neck stiffness or fever?")],
-        "skin": [("itch", "Is it itchy?"), ("spread", "Has the rash spread?"), ("prod", "Used any new product or soap?")],
-        "breathing": [("breath", "Breathless at rest or activity?"), ("wheeze", "Any wheezing?"), ("chest", "Any chest tightness?")],
-        "mental": [("sleep", "How many hours do you sleep daily?"), ("mood", "Feeling low or overwhelmed?"), ("energy", "Any low energy or focus issues?")],
-        "general": [("sleep", "How many hours do you sleep daily?"), ("appetite", "Any change in appetite?"), ("energy", "Feeling tired often?")],
+    .ai-header{
+        text-align:center;
+        padding:28px 20px;
+        border-radius:24px;
+        background:linear-gradient(135deg,#0F172A,#1E3A8A);
+        margin-bottom:20px;
+        box-shadow:0 8px 28px rgba(0,0,0,0.18);
     }
 
-    def is_emergency(text):
-        t = text.lower()
-        flags = ["chest pain", "cannot breathe", "faint", "severe bleeding", "slurred speech", "sudden weakness"]
-        return any(k in t for k in flags)
+    .ai-title{
+        font-size:38px;
+        font-weight:700;
+        color:white;
+        margin-top:10px;
+    }
 
-    def update_severity(qkey, ans):
-        s = state["severity_score"]
-        ans = ans.lower()
+    .ai-sub{
+        color:#CBD5E1;
+        font-size:15px;
+        margin-top:6px;
+    }
 
-        if "severe" in ans:
-            s += 30
-        if "faint" in ans:
-            s += 40
-        if "worse" in ans:
-            s += 20
+    .robot{
+        font-size:60px;
+    }
 
-        nums = re.findall(r"\d+", ans)
-        if nums:
-            n = int(nums[0])
-            if "temp" in qkey:
-                if n >= 39:
-                    s += 30
-                elif n >= 38:
-                    s += 15
+    .clear-wrap{
+        display:flex;
+        justify-content:flex-end;
+        margin-bottom:12px;
+    }
 
-        state["severity_score"] = min(100, s)
+    </style>
+    """, unsafe_allow_html=True)
 
-    def natural_summary(domain):
-        sev = state["severity_score"]
+    # ================= HEADER =================
 
-        if sev >= 70:
-            tone = "Thanks for sharing that — some of your symptoms feel a bit more intense, so let’s be cautious."
-        elif sev >= 40:
-            tone = "Alright — there are a few things here worth paying attention to."
-        else:
-            tone = "Thanks — this sounds manageable right now."
+    st.markdown(
+    """
+    <div class="ai-header">
+        <div class="robot">🤖</div>
+        <div class="ai-title">Healthcare AI Assistant</div>
+        <div class="ai-sub">
+            AI-powered healthcare guidance for symptoms,
+            wellness and health awareness.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-        if domain == "fever":
-            return f"{tone} This pattern fits a feverish illness. Stay hydrated, rest well, and monitor temperature. If breathing worsens or fever persists → see a doctor."
-        if domain == "stomach":
-            return f"{tone} These signs match indigestion or stomach infection. Sip ORS, avoid oily food, and seek care if vomiting persists or dehydration starts."
-        if domain == "head":
-            return f'{tone} This feels like a tension or migraine-type headache. Reduce screen time, stay hydrated, and rest. If sudden worst headache of your life → get urgent care.'
-        if domain == "skin":
-            return f"{tone} This looks like a mild rash or allergy. Avoid irritants, keep the area clean, and monitor spread. If swelling or breathing issues → get urgent help."
-        if domain == "breathing":
-            return f"{tone} Breathing-related symptoms deserve careful monitoring. If breathlessness worsens or happens at rest, please seek immediate medical attention."
-        if domain == "mental":
-            return f"{tone} Your responses suggest mental fatigue or stress buildup. Consistent sleep, routine breaks, and talking to someone you trust can help a lot."
-        return f"{tone} Nothing alarming right now — keep a balanced routine and observe symptoms over the next 1–2 days."
+    # ================= CLEAR CHAT =================
 
-    def assistant_typing(final):
-        st.session_state.chat_history.append(
-            {"role": "assistant", "text": "⏳ Dr is typing…", "time": now_ts(), "typing": True}
-        )
-        time.sleep(0.8)
+    c1, c2 = st.columns([8,2])
 
-        if st.session_state.chat_history[-1].get("typing"):
-            st.session_state.chat_history.pop()
+    with c2:
 
-        push_assistant(final)
+        if st.button("🗑 Clear Chat"):
 
-    user_msg = st.chat_input("Tell me how you're feeling…")
+            st.session_state.chat_messages = []
 
-    if user_msg:
-        msg = user_msg.strip()
-        push_user(msg)
+            st.rerun()
 
-        if is_emergency(msg):
-            assistant_typing("I’m detecting serious warning signs. Please go to the nearest emergency room immediately.")
-            state["finished"] = True
-            state["show_finders"] = True
+    # ================= SESSION =================
 
-        else:
-            if state["domain"] is None or state["finished"]:
-                dom, topic = classify_initial(msg)
-                state["domain"] = dom
-                state["q_index"] = 0
-                state["answers"] = {}
-                state["finished"] = False
-                state["show_finders"] = False
-                state["severity_score"] = 0
-                assistant_typing(f"Okay — let me ask a couple of things about your {topic} so I can understand better.")
+    if "chat_messages" not in st.session_state:
 
-            follow = FOLLOWUPS.get(state["domain"], FOLLOWUPS["general"])
-            if state["q_index"] > 0 and (state["q_index"] - 1) < len(follow):
-                prev_key = follow[state["q_index"] - 1][0]
-                state["answers"][prev_key] = msg
-                update_severity(prev_key, msg)
+        st.session_state.chat_messages = []
 
-            if state["q_index"] < len(follow):
-                key, q = follow[state["q_index"]]
-                assistant_typing(q)
-                state["q_index"] += 1
+    # ================= DISPLAY OLD CHATS =================
+
+    for msg in st.session_state.chat_messages:
+
+        avatar = None
+
+        if msg["role"] == "user":
+
+            if st.session_state.user["gender"] == "Male":
+
+                avatar = "🧑🏻"
+
             else:
-                summary = natural_summary(state["domain"])
-                assistant_typing(summary)
-                state["finished"] = True
-                state["show_finders"] = True
 
-    _, chat_col = st.columns([0.06, 0.94])
-    with chat_col:
-        for msg in st.session_state.chat_history:
-            safe_text = html.escape(msg["text"]).replace("\n", "<br>")
-            t = msg.get("time", "")
+                avatar = "👩🏻"
 
-            if msg["role"] == "user":
-                user_svg = """
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
-                    <circle cx="12" cy="7" r="4"/>
-                    <path d="M4 20c0-4 3-6 8-6s8 2 8 6"/>
-                </svg>"""
-                st.markdown(
-                    f"""
-                    <div class="chat-row" style="justify-content:flex-end;">
-                        <div style="display:flex;flex-direction:column;align-items:flex-end;">
-                            <div class="user-bubble">{safe_text}</div>
-                            <span class="meta-time">{t}</span>
-                        </div>
-                        <div class="avatar user-avatar">{user_svg}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            else:
-                doc_svg = """
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="#1f6fb3">
-                    <circle cx="12" cy="7" r="4" fill="white"/>
-                    <path d="M4 20c0-4 3-6 8-6s8 2 8 6" fill="white"/>
-                </svg>"""
-                st.markdown(
-                    f"""
-                    <div class="chat-row" style="justify-content:flex-start;">
-                        <div class="avatar doc-avatar">{doc_svg}</div>
-                        <div>
-                            <div class="assistant-bubble">{safe_text}</div>
-                            <span class="meta-time">{t}</span>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+        else:
 
-    if state.get("show_finders"):
-        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-        st.markdown(
-            '<a href="https://www.google.com/maps/search/doctor+near+me/" target="_blank">'
-            '<button style="background:#1f6fb3;padding:10px;color:white;border-radius:8px;margin-right:8px;">Find Doctor</button></a>'
-            '<a href="https://www.google.com/maps/search/hospital+near+me/" target="_blank">'
-            '<button style="background:#2b7edb;padding:10px;color:white;border-radius:8px;">Find Hospital</button></a>',
-            unsafe_allow_html=True,
+            avatar = "🤖"
+
+        with st.chat_message(msg["role"], avatar=avatar):
+
+            st.markdown(msg["content"])
+
+    # ================= USER INPUT =================
+
+    user_prompt = st.chat_input(
+        "Describe your symptoms or ask a health question..."
+    )
+
+    # ================= RESPONSE =================
+
+    if user_prompt:
+
+        # ---------- USER MESSAGE ----------
+
+        user_avatar = (
+            "🧑🏻"
+            if st.session_state.user["gender"] == "Male"
+            else "👩🏻"
         )
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.session_state.chat_messages.append({
+
+            "role": "user",
+
+            "content": user_prompt
+        })
+
+        # ================= CHAT LIMIT =================
+
+        if len(st.session_state.chat_messages) > 20:
+
+            st.session_state.chat_messages = (
+                st.session_state.chat_messages[-20:]
+            )
+
+        with st.chat_message("user", avatar=user_avatar):
+
+            st.markdown(user_prompt)
+
+        # ---------- ASSISTANT ----------
+
+        with st.chat_message("assistant", avatar="🤖"):
+
+            thinking = st.empty()
+
+            thinking.markdown("🤖 Typing...")
+
+            time.sleep(1)
+
+            try:
+
+                # ================= EMERGENCY DETECTION =================
+
+                emergency_keywords = [
+                    "chest pain",
+                    "heart attack",
+                    "can't breathe",
+                    "cannot breathe",
+                    "difficulty breathing",
+                    "stroke",
+                    "unconscious",
+                    "severe bleeding"
+                ]
+
+                if any(
+                    k in user_prompt.lower()
+                    for k in emergency_keywords
+                ):
+
+                    final_response = (
+                        "⚠️ Your symptoms may require urgent medical attention. "
+                        "Please contact a healthcare professional or visit the nearest emergency facility immediately."
+                    )
+
+                else:
+
+                    # ================= CHAT MEMORY =================
+
+                    chat_context = [
+
+                        {
+                            "role": "system",
+                            "content": (
+
+                                "You are Health Partner AI, a professional healthcare assistant integrated inside a healthcare web application. "
+
+                                "You must remember previous conversation context carefully. "
+
+                                "Never forget previous symptoms mentioned by the user. "
+
+                                "If the user clarifies something, update your understanding instead of contradicting previous messages. "
+
+                                "Your responses should feel like a calm intelligent healthcare assistant. "
+
+                                "Keep responses SHORT, natural, professional and conversational. "
+
+                                "Avoid robotic replies and avoid unnecessary disclaimers. "
+
+                                "Do not repeatedly ask questions forever. "
+
+                                "After asking 1 or 2 relevant follow-up questions, provide practical wellness guidance or possible causes. "
+
+                                "If symptoms appear mild, provide simple lifestyle guidance. "
+
+                                "If symptoms appear serious, recommend consulting a healthcare professional. "
+
+                                "Never suddenly change topic. "
+
+                                "Never act emotionally or dramatically. "
+
+                                "Never say things like 'you're not feeling like talking'. "
+
+                                "Stay medically focused and context-aware. "
+
+                                "Examples:\n\n"
+
+                                "User: headache\n"
+                                "Assistant: Headaches are often linked to stress, dehydration or lack of sleep. Is the pain mild or severe?\n\n"
+
+                                "User: severe\n"
+                                "Assistant: Severe headaches can sometimes occur due to stress, migraine or exhaustion. Try resting, staying hydrated and reducing screen exposure for some time. If symptoms continue frequently, consult a healthcare professional.\n\n"
+
+                                "User: stress\n"
+                                "Assistant: Stress can sometimes affect both sleep and energy levels. Try maintaining proper sleep, hydration and relaxation for a few days. If stress becomes persistent, consider consulting a mental health professional."
+                            )
+                        }
+                    ]
+
+                    # ================= PREVIOUS MEMORY =================
+
+                    for old_msg in st.session_state.chat_messages[-8:]:
+
+                        if old_msg["role"] == "user":
+
+                            chat_context.append({
+
+                                "role": "user",
+
+                                "content": old_msg["content"]
+                            })
+
+                        else:
+
+                            chat_context.append({
+
+                                "role": "assistant",
+
+                                "content": old_msg["content"]
+                            })
+
+                    # ================= CURRENT MESSAGE =================
+
+                    chat_context.append({
+
+                        "role": "user",
+
+                        "content": user_prompt
+                    })
+
+                    # ================= GROQ RESPONSE =================
+
+                    response = client.chat.completions.create(
+
+                        model="llama-3.3-70b-versatile",
+
+                        messages=chat_context,
+
+                        temperature=0.2,
+
+                        max_tokens=90
+                    )
+
+                    final_response = (
+
+                        response.choices[0]
+                        .message.content
+                        .strip()
+                    )
+
+            except Exception as e:
+
+                final_response = f"Error: {e}"
+
+            thinking.markdown(final_response)
+
+        # ================= SAVE ASSISTANT RESPONSE =================
+
+        st.session_state.chat_messages.append({
+
+            "role": "assistant",
+
+            "content": final_response
+        })
+
+        # ================= CHAT LIMIT =================
+
+        if len(st.session_state.chat_messages) > 20:
+
+            st.session_state.chat_messages = (
+                st.session_state.chat_messages[-20:]
+            )
 
 elif page == "Skin Cancer Detection":
     st.markdown("<div class='card'>", unsafe_allow_html=True)
